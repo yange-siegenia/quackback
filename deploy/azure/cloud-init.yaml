@@ -1,0 +1,125 @@
+#cloud-config
+# ============================================================================
+# Quackback — Azure VM bootstrap (cloud-init)
+# ============================================================================
+# Runs once on first boot. Installs Docker, clones Quackback, writes a hardened
+# .env, brings up docker-compose.prod.yml (app + Postgres + Dragonfly + MinIO),
+# and puts Caddy in front for automatic HTTPS (Let's Encrypt).
+#
+# The placeholder values below (wrapped in double underscores) are substituted by
+# main.bicep at deploy time — do not fill them in by hand. See deploy/azure/README.md.
+# ============================================================================
+
+package_update: true
+package_upgrade: false
+
+write_files:
+  # Compose override that runs Caddy as the public entrypoint and stops the app
+  # from publishing its own host port (Caddy terminates TLS and proxies to it).
+  - path: /opt/quackback/docker-compose.caddy.yml
+    permissions: '0644'
+    owner: root:root
+    content: |
+      services:
+        app:
+          # App is reachable only on the internal compose network; Caddy fronts it.
+          ports: []
+          expose:
+            - '3000'
+
+        caddy:
+          image: caddy:2-alpine
+          container_name: quackback-caddy
+          restart: unless-stopped
+          depends_on:
+            app:
+              condition: service_healthy
+          ports:
+            - '80:80'
+            - '443:443'
+          volumes:
+            - /opt/quackback/Caddyfile:/etc/caddy/Caddyfile:ro
+            - caddy_data:/data
+            - caddy_config:/config
+
+      volumes:
+        caddy_data:
+        caddy_config:
+
+  # Caddy config: automatic HTTPS for the VM's public FQDN, reverse-proxy to app.
+  - path: /opt/quackback/Caddyfile
+    permissions: '0644'
+    owner: root:root
+    content: |
+      {
+        email __ACME_EMAIL__
+      }
+
+      __DOMAIN__ {
+        reverse_proxy app:3000
+      }
+
+  # Systemd unit so the stack starts on boot and restarts on failure.
+  - path: /etc/systemd/system/quackback.service
+    permissions: '0644'
+    owner: root:root
+    content: |
+      [Unit]
+      Description=Quackback (docker compose)
+      Requires=docker.service
+      After=docker.service network-online.target
+      Wants=network-online.target
+
+      [Service]
+      Type=oneshot
+      RemainAfterExit=yes
+      WorkingDirectory=/opt/quackback/quackback
+      ExecStart=/usr/bin/docker compose -f docker-compose.prod.yml -f /opt/quackback/docker-compose.caddy.yml up -d
+      ExecStop=/usr/bin/docker compose -f docker-compose.prod.yml -f /opt/quackback/docker-compose.caddy.yml down
+      TimeoutStartSec=0
+
+      [Install]
+      WantedBy=multi-user.target
+
+runcmd:
+  # --- Install Docker Engine + Compose plugin (official repo) ---------------
+  - export DEBIAN_FRONTEND=noninteractive
+  - install -m 0755 -d /etc/apt/keyrings
+  - curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+  - chmod a+r /etc/apt/keyrings/docker.asc
+  - echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo $VERSION_CODENAME) stable" > /etc/apt/sources.list.d/docker.list
+  - apt-get update
+  - apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin git
+  - systemctl enable --now docker
+
+  # --- Fetch Quackback ------------------------------------------------------
+  - git clone https://github.com/QuackbackIO/quackback.git /opt/quackback/quackback
+
+  # --- Write the production .env (secrets injected by Bicep) ----------------
+  - |
+    cat > /opt/quackback/quackback/.env <<'EOF'
+    BASE_URL=__BASE_URL__
+    SECRET_KEY=__SECRET_KEY__
+    QUACKBACK_TAG=__QUACKBACK_TAG__
+    APP_PORT=3000
+
+    POSTGRES_USER=quackback
+    POSTGRES_PASSWORD=__POSTGRES_PASSWORD__
+    POSTGRES_DB=quackback
+
+    MINIO_ROOT_USER=quackback
+    MINIO_ROOT_PASSWORD=__MINIO_PASSWORD__
+    S3_BUCKET=quackback
+    S3_REGION=us-east-1
+
+    EMAIL_SMTP_HOST=__EMAIL_SMTP_HOST__
+    EMAIL_SMTP_PORT=__EMAIL_SMTP_PORT__
+    EMAIL_SMTP_USER=__EMAIL_SMTP_USER__
+    EMAIL_SMTP_PASS=__EMAIL_SMTP_PASS__
+    EMAIL_FROM=__EMAIL_FROM__
+    EOF
+  - chmod 600 /opt/quackback/quackback/.env
+
+  # --- Start the stack ------------------------------------------------------
+  - systemctl daemon-reload
+  - systemctl enable --now quackback.service

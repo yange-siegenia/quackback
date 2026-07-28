@@ -4,10 +4,11 @@ This directory contains deployment configurations for Quackback.
 
 ## Deployment Options
 
-| Option                                     | For                          | Infrastructure       |
-| ------------------------------------------ | ---------------------------- | -------------------- |
-| **[Self-Hosted](./self-hosted/README.md)** | Community & Enterprise users | Docker, Bun, any VPS |
-| **[Cloud](./cloud/README.md)**             | Quackback team only          | Cloudflare Workers   |
+| Option                                     | For                          | Infrastructure          |
+| ------------------------------------------ | ---------------------------- | ----------------------- |
+| **[Self-Hosted](./self-hosted/README.md)** | Community & Enterprise users | Docker, Bun, any VPS    |
+| **[Azure VM (IaC)](./azure/README.md)**    | Self-hosters on Azure        | Bicep, single Ubuntu VM |
+| **[Cloud](./cloud/README.md)**             | Quackback team only          | Cloudflare Workers      |
 
 ---
 
@@ -41,6 +42,13 @@ docker compose -f docker-compose.prod.yml up -d
 
 See the [Self-Hosted Guide](./self-hosted/README.md) for complete documentation.
 
+### One-command deploy to Azure
+
+Prefer Infrastructure-as-Code on Azure? The [Azure VM guide](./azure/README.md)
+ships a Bicep template + cloud-init that provisions an Ubuntu VM (network, public
+IP/DNS, HTTPS via Caddy) and boots the full self-host stack into an existing
+resource group.
+
 ---
 
 ## Quackback Cloud (Internal)
@@ -58,6 +66,11 @@ See the [Cloud Deployment Guide](./cloud/README.md) for internal documentation.
 ```
 deploy/
 ├── README.md              # This file
+├── azure/                 # Azure VM deployment (Bicep + cloud-init)
+│   ├── README.md          # Azure deployment guide
+│   ├── main.bicep         # VNet, NSG, public IP/DNS, Ubuntu VM
+│   ├── cloud-init.yaml    # VM bootstrap (Docker, compose stack, Caddy)
+│   └── main.parameters.example.json
 ├── cloud/                 # Quackback Cloud (Cloudflare Workers)
 │   ├── README.md          # Cloud deployment guide
 │   ├── wrangler.jsonc     # Base wrangler config
