@@ -33,6 +33,7 @@ export interface UpdatePostInput {
   statusId?: StatusId
   tagIds?: TagId[]
   ownerPrincipalId?: PrincipalId | null
+  jiraLink?: string | null
 }
 
 /**

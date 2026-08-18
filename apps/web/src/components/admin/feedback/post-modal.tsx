@@ -106,6 +106,7 @@ function PostModalContent({
   const [title, setTitle] = useState(post.title)
   const [contentJson, setContentJson] = useState<JSONContent | null>(getInitialContentJson(post))
   const [contentMarkdown, setContentMarkdown] = useState(post.content ?? '')
+  const [jiraLink, setJiraLink] = useState(post.jiraLink ?? '')
   const [hasInitialized, setHasInitialized] = useState(false)
 
   // UI state
@@ -150,6 +151,8 @@ function PostModalContent({
     if (post && !hasInitialized) {
       setTitle(post.title)
       setContentJson(getInitialContentJson(post))
+      setContentMarkdown(post.content ?? '')
+      setJiraLink(post.jiraLink ?? '')
       setHasInitialized(true)
     }
   }, [post, hasInitialized])
@@ -158,9 +161,11 @@ function PostModalContent({
   useEffect(() => {
     setTitle(post.title)
     setContentJson(getInitialContentJson(post))
+    setContentMarkdown(post.content ?? '')
+    setJiraLink(post.jiraLink ?? '')
     setShowMergeDialog(false)
     setShowMergeOthersDialog(false)
-  }, [post.id, post.title, post.contentJson])
+  }, [post.id, post.title, post.content, post.contentJson, post.jiraLink])
 
   // Keyboard navigation
   usePostDetailKeyboard({
@@ -246,6 +251,7 @@ function PostModalContent({
         title: title.trim(),
         content: contentMarkdown,
         contentJson: contentJson ?? null,
+        jiraLink: currentUser.role === 'admin' ? jiraLink : undefined,
       })
       toast.success('Post updated')
       onClose()
@@ -255,7 +261,10 @@ function PostModalContent({
   }
 
   // Check if there are changes
-  const hasChanges = title !== post.title || contentMarkdown !== (post.content ?? '')
+  const hasChanges =
+    title !== post.title ||
+    contentMarkdown !== (post.content ?? '') ||
+    (currentUser.role === 'admin' && jiraLink !== (post.jiraLink ?? ''))
 
   const handleKeyDown = useKeyboardSubmit(hasChanges ? handleSubmit : () => {})
 
@@ -497,6 +506,9 @@ function PostModalContent({
               variant="card"
               manageActions={manageActions}
               feedbackSource={feedbackSource}
+              jiraLink={jiraLink}
+              canEditJiraLink={currentUser.role === 'admin'}
+              onJiraLinkChange={setJiraLink}
             />
           </Suspense>
         </div>

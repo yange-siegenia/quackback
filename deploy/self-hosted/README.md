@@ -412,6 +412,11 @@ File uploads (logos, avatars, changelog images) work out of the box via the incl
 
 > Railway offers a free trial with $5 credit. See [Railway pricing](https://railway.com/pricing) for details.
 
+### Azure (single VM, IaC)
+
+Deploy an Ubuntu VM running the full self-host stack with automatic HTTPS using a
+Bicep template + cloud-init. See the [Azure VM guide](../azure/README.md).
+
 Coming soon:
 
 - Render

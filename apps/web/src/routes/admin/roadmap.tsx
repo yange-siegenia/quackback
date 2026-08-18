@@ -38,6 +38,7 @@ export const Route = createFileRoute('/admin/roadmap')({
         name: user.name,
         email: user.email,
         principalId: principal.id,
+        role: principal.role as 'admin' | 'member',
       },
     }
   },

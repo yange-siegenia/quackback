@@ -292,6 +292,10 @@ interface MetadataSidebarProps {
     externalUrl: string | null
     createdAt: string
   } | null
+  /** Internal-only Jira reference. Omit on public surfaces. */
+  jiraLink?: string
+  canEditJiraLink?: boolean
+  onJiraLinkChange?: (value: string) => void
 }
 
 export function MetadataSidebar({
@@ -323,6 +327,9 @@ export function MetadataSidebar({
   votersReadonly = false,
   manageActions,
   feedbackSource,
+  jiraLink,
+  canEditJiraLink = false,
+  onJiraLinkChange,
 }: MetadataSidebarProps) {
   const intl = useIntl()
   const [tagOpen, setTagOpen] = useState(false)
@@ -777,6 +784,26 @@ export function MetadataSidebar({
           </div>
           <TimeAgo date={createdAt} className="text-sm text-foreground" />
         </div>
+
+        {/* Jira link is intentionally rendered only when the caller confirms admin access. */}
+        {canEditJiraLink && onJiraLinkChange && (
+          <div className="space-y-2">
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <LinkIcon className="h-4 w-4" />
+              <label htmlFor={`jira-link-${postId}`}>Jira link</label>
+            </div>
+            <input
+              id={`jira-link-${postId}`}
+              type="text"
+              value={jiraLink ?? ''}
+              onChange={(event) => onJiraLinkChange(event.target.value)}
+              maxLength={2048}
+              placeholder="https://…"
+              disabled={isUpdating}
+              className="h-8 w-full rounded-md border border-input bg-background px-2 text-sm text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+            />
+          </div>
+        )}
 
         {/* Source (only for posts created from the feedback pipeline) */}
         {feedbackSource && (

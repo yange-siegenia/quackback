@@ -37,6 +37,8 @@ export interface PostDetails {
   title: string
   content: string
   contentJson?: unknown
+  /** Internal Jira reference; returned only by team-authenticated admin queries. */
+  jiraLink?: string | null
   statusId: StatusId | null
   voteCount: number
   hasVoted: boolean
@@ -104,4 +106,5 @@ export interface CurrentUser {
   name: string
   email: string
   principalId: string
+  role: 'admin' | 'member'
 }

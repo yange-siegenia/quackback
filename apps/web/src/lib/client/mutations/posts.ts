@@ -45,6 +45,7 @@ interface UpdatePostInput {
   boardId?: string
   tagIds?: string[]
   allTags?: Tag[]
+  jiraLink?: string | null
 }
 
 interface UpdatePostResponse {
@@ -54,6 +55,7 @@ interface UpdatePostResponse {
   contentJson: unknown
   statusId: StatusId | null
   boardId: string
+  jiraLink?: string | null
 }
 
 interface VotePostResponse {
@@ -239,6 +241,7 @@ export function useUpdatePost() {
       title,
       content,
       contentJson,
+      jiraLink,
     }: UpdatePostInput): Promise<UpdatePostResponse> =>
       updatePostFn({
         data: {
@@ -246,9 +249,10 @@ export function useUpdatePost() {
           title,
           content,
           contentJson: contentJson as { type: 'doc'; content?: unknown[] },
+          jiraLink,
         },
       }) as Promise<UpdatePostResponse>,
-    onMutate: async ({ postId, title, content, contentJson, statusId }) => {
+    onMutate: async ({ postId, title, content, contentJson, statusId, jiraLink }) => {
       await queryClient.cancelQueries({ queryKey: inboxKeys.detail(postId) })
       await queryClient.cancelQueries({ queryKey: inboxKeys.lists() })
 
@@ -264,6 +268,7 @@ export function useUpdatePost() {
           content,
           contentJson,
           statusId: statusId ?? previousDetail.statusId,
+          jiraLink: jiraLink === undefined ? previousDetail.jiraLink : jiraLink,
         })
       }
       updatePostInLists(queryClient, postId, (post) => ({
@@ -287,6 +292,7 @@ export function useUpdatePost() {
               content: data.content,
               contentJson: data.contentJson,
               statusId: data.statusId,
+              jiraLink: data.jiraLink === undefined ? old.jiraLink : data.jiraLink,
             }
           : old
       )
