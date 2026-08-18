@@ -55,6 +55,7 @@ export async function getPostWithDetails(postId: PostId): Promise<PostWithDetail
       title: true,
       content: true,
       contentJson: true,
+      jiraLink: true,
       principalId: true,
       statusId: true,
       ownerPrincipalId: true,

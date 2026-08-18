@@ -79,6 +79,7 @@ export const Route = createFileRoute('/admin')({
         name: user.name,
         email: user.email,
         principalId: principal.id,
+        role: principal.role as 'admin' | 'member',
       },
     }
   },

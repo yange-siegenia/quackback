@@ -363,6 +363,9 @@ export async function updatePost(
       throw new ValidationError('VALIDATION_ERROR', 'Content must be 10,000 characters or less')
     }
   }
+  if (input.jiraLink !== undefined && input.jiraLink !== null && input.jiraLink.length > 2048) {
+    throw new ValidationError('VALIDATION_ERROR', 'Jira link must be 2,048 characters or less')
+  }
 
   // Capture current tag IDs before update (for activity diff)
   let currentTagIds: string[] = []
@@ -395,6 +398,7 @@ export async function updatePost(
   }
   if (input.statusId !== undefined) updateData.statusId = input.statusId
   if (input.ownerPrincipalId !== undefined) updateData.ownerPrincipalId = input.ownerPrincipalId
+  if (input.jiraLink !== undefined) updateData.jiraLink = input.jiraLink?.trim() || null
 
   // Update the post only if there's data to update
   let updatedPost: Post

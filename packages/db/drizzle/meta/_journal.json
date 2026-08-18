@@ -883,6 +883,13 @@
       "when": 1783641600000,
       "tag": "0125_conversation_channel_drop_default",
       "breakpoints": true
+    },
+    {
+      "idx": 126,
+      "version": "7",
+      "when": 1787011200000,
+      "tag": "0126_posts_jira_link",
+      "breakpoints": true
     }
   ]
 }

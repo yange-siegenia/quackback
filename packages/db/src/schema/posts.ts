@@ -45,6 +45,8 @@ export const posts = pgTable(
       .references(() => boards.id, { onDelete: 'cascade' }),
     title: text('title').notNull(),
     content: text('content').notNull(),
+    // Internal issue-tracker reference. Never exposed by public post queries.
+    jiraLink: text('jira_link'),
     // Rich content stored as TipTap JSON (optional, for rich text support)
     contentJson: jsonb('content_json').$type<TiptapContent>(),
     // Principal-scoped identity - every post has an author

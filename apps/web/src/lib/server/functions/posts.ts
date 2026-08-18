@@ -109,6 +109,7 @@ const updatePostSchema = z.object({
   content: z.string().max(10000).optional(),
   contentJson: tiptapContentSchema.optional(),
   ownerId: z.string().nullable().optional(),
+  jiraLink: z.string().max(2048).nullable().optional(),
 })
 
 const deletePostSchema = z.object({
@@ -272,8 +273,10 @@ export const fetchPostWithDetails = createServerFn({ method: 'GET' })
           : null,
       ])
 
+      const { jiraLink, ...teamVisibleResult } = serializePostDates(result)
       return {
-        ...serializePostDates(result),
+        ...teamVisibleResult,
+        ...(auth.principal.role === 'admin' ? { jiraLink } : {}),
         summaryUpdatedAt: toIsoStringOrNull(result.summaryUpdatedAt),
         hasVoted: voted,
         comments: comments.map(serializeComment),
@@ -400,7 +403,9 @@ export const updatePostFn = createServerFn({ method: 'POST' })
   .handler(async ({ data }) => {
     log.info({ post_id: data.id }, 'update post')
     try {
-      const auth = await requireAuth({ roles: ['admin', 'member'] })
+      const auth = await requireAuth({
+        roles: data.jiraLink !== undefined ? ['admin'] : ['admin', 'member'],
+      })
 
       const result = await updatePost(
         data.id as PostId,
@@ -409,6 +414,7 @@ export const updatePostFn = createServerFn({ method: 'POST' })
           content: data.content,
           contentJson: data.contentJson ? sanitizeTiptapContent(data.contentJson) : undefined,
           ownerPrincipalId: data.ownerId as PrincipalId | null | undefined,
+          jiraLink: data.jiraLink,
         },
         {
           principalId: auth.principal.id,
@@ -418,7 +424,11 @@ export const updatePostFn = createServerFn({ method: 'POST' })
         }
       )
       log.info({ post_id: result.id }, 'post updated')
-      return serializePostDates(result)
+      const { jiraLink, ...teamVisibleResult } = serializePostDates(result)
+      return {
+        ...teamVisibleResult,
+        ...(auth.principal.role === 'admin' ? { jiraLink } : {}),
+      }
     } catch (error) {
       log.error({ err: error }, 'update post failed')
       throw error

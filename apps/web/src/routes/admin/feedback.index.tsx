@@ -78,6 +78,7 @@ export const Route = createFileRoute('/admin/feedback/')({
         name: currentUser.name,
         email: currentUser.email,
         principalId: principal.id,
+        role: principal.role as 'admin' | 'member',
       },
     }
   },
