@@ -15,6 +15,32 @@ variable "location" {
   default     = "westeurope"
 }
 
+# ---------------------------------------------------------------------------
+# Scope and permissions
+#
+# The defaults assume you hold Owner on the subscription. Both toggles exist
+# for the common enterprise case where you do not: a platform team owns the
+# subscription and hands you a single resource group with Contributor on it.
+# ---------------------------------------------------------------------------
+
+variable "create_resource_group" {
+  description = "Create the resource group. Set false to deploy into a group someone else created — required if you lack a subscription-scope role, since creating a resource group is a subscription-level write."
+  type        = bool
+  default     = true
+}
+
+variable "resource_group_name" {
+  description = "Resource group name. Empty means '<name_prefix>-rg'. When create_resource_group is false this must name an existing group, and var.location must match the region that group is already in."
+  type        = string
+  default     = ""
+}
+
+variable "manage_role_assignments" {
+  description = "Let Terraform create the three role assignments the deployment needs (AcrPull and Key Vault Secrets User for the app identity, Key Vault Secrets Officer for the deployer). Set false if you only hold Contributor — that role excludes Microsoft.Authorization/*/Write, so the assignments must be made for you out of band. See deploy/azure/README.md for the exact az commands; the apply will fail on Key Vault secrets until they exist."
+  type        = bool
+  default     = true
+}
+
 variable "tags" {
   description = "Tags applied to every resource."
   type        = map(string)

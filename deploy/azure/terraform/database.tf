@@ -30,8 +30,8 @@ resource "random_password" "postgres" {
 
 resource "azurerm_postgresql_flexible_server" "main" {
   name                = "${var.name_prefix}-pg-${local.suffix}"
-  resource_group_name = azurerm_resource_group.main.name
-  location            = azurerm_resource_group.main.location
+  resource_group_name = local.resource_group_name
+  location            = local.resource_group_location
 
   version                = var.postgres_version
   administrator_login    = var.postgres_admin_username

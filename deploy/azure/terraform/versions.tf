@@ -28,6 +28,17 @@ terraform {
 }
 
 provider "azurerm" {
+  # The provider otherwise tries to register ~30 resource providers on every
+  # run — Databricks, HDInsight, ServiceFabric and other things this deployment
+  # never creates. Registration is a subscription-scope write, so on any
+  # subscription where you hold rights only on a resource group the provider
+  # fails before it plans anything, listing errors for services that are not
+  # part of this stack at all.
+  #
+  # The providers this stack does need are listed in deploy/azure/README.md and
+  # must be registered once, by someone with subscription rights.
+  resource_provider_registrations = "none"
+
   features {
     key_vault {
       # A destroyed vault stays recoverable for the soft-delete window, so a

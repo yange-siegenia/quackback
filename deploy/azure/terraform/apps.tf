@@ -16,8 +16,8 @@
 
 resource "azurerm_container_app_environment" "main" {
   name                = "${var.name_prefix}-env"
-  resource_group_name = azurerm_resource_group.main.name
-  location            = azurerm_resource_group.main.location
+  resource_group_name = local.resource_group_name
+  location            = local.resource_group_location
 
   log_analytics_workspace_id = azurerm_log_analytics_workspace.main.id
   infrastructure_subnet_id   = azurerm_subnet.apps.id
@@ -80,7 +80,7 @@ locals {
 
 resource "azurerm_container_app" "web" {
   name                         = "${var.name_prefix}-web"
-  resource_group_name          = azurerm_resource_group.main.name
+  resource_group_name          = local.resource_group_name
   container_app_environment_id = azurerm_container_app_environment.main.id
   revision_mode                = "Single"
   tags                         = var.tags
@@ -198,7 +198,7 @@ resource "azurerm_container_app" "web" {
 
 resource "azurerm_container_app" "worker" {
   name                         = "${var.name_prefix}-worker"
-  resource_group_name          = azurerm_resource_group.main.name
+  resource_group_name          = local.resource_group_name
   container_app_environment_id = azurerm_container_app_environment.main.id
   revision_mode                = "Single"
   tags                         = var.tags
@@ -277,8 +277,8 @@ resource "azurerm_container_app" "worker" {
 
 resource "azurerm_container_app_job" "migrate" {
   name                         = "${var.name_prefix}-migrate"
-  resource_group_name          = azurerm_resource_group.main.name
-  location                     = azurerm_resource_group.main.location
+  resource_group_name          = local.resource_group_name
+  location                     = local.resource_group_location
   container_app_environment_id = azurerm_container_app_environment.main.id
   tags                         = var.tags
 

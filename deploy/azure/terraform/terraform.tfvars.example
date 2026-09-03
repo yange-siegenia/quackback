@@ -4,6 +4,20 @@
 name_prefix = "quackback"
 location    = "westeurope"
 
+# --- Scope and permissions ------------------------------------------------
+# Defaults assume you own the subscription. If a platform team owns it and
+# hands you a single resource group with Contributor, set all three: creating a
+# resource group and creating role assignments are both writes that Contributor
+# on a group does not grant. See the README for the az commands an admin then
+# runs, and for the resource providers that must be registered first.
+#
+# create_resource_group   = false
+# resource_group_name     = "rg-quackback-prod-01"
+# manage_role_assignments = false
+#
+# When adopting a group, `location` must match the region that group is
+# already in.
+
 # Pin to a released tag in production; the deploy workflow passes this in.
 image_tag = "latest"
 

@@ -9,15 +9,15 @@
 
 resource "azurerm_user_assigned_identity" "app" {
   name                = "${var.name_prefix}-identity"
-  resource_group_name = azurerm_resource_group.main.name
-  location            = azurerm_resource_group.main.location
+  resource_group_name = local.resource_group_name
+  location            = local.resource_group_location
   tags                = var.tags
 }
 
 resource "azurerm_container_registry" "main" {
   name                = local.registry_name
-  resource_group_name = azurerm_resource_group.main.name
-  location            = azurerm_resource_group.main.location
+  resource_group_name = local.resource_group_name
+  location            = local.resource_group_location
   sku                 = "Standard"
   # Identity-based pulls only; there is no admin user to leak.
   admin_enabled = false
@@ -25,6 +25,8 @@ resource "azurerm_container_registry" "main" {
 }
 
 resource "azurerm_role_assignment" "acr_pull" {
+  count = var.manage_role_assignments ? 1 : 0
+
   scope                = azurerm_container_registry.main.id
   role_definition_name = "AcrPull"
   principal_id         = azurerm_user_assigned_identity.app.principal_id
@@ -36,8 +38,8 @@ resource "azurerm_role_assignment" "acr_pull" {
 
 resource "azurerm_key_vault" "main" {
   name                = local.key_vault_name
-  resource_group_name = azurerm_resource_group.main.name
-  location            = azurerm_resource_group.main.location
+  resource_group_name = local.resource_group_name
+  location            = local.resource_group_location
   tenant_id           = data.azurerm_client_config.current.tenant_id
   sku_name            = "standard"
 
@@ -53,6 +55,8 @@ resource "azurerm_key_vault" "main" {
 
 # The identity the containers run as may read secret values.
 resource "azurerm_role_assignment" "kv_app_read" {
+  count = var.manage_role_assignments ? 1 : 0
+
   scope                = azurerm_key_vault.main.id
   role_definition_name = "Key Vault Secrets User"
   principal_id         = azurerm_user_assigned_identity.app.principal_id
@@ -60,6 +64,8 @@ resource "azurerm_role_assignment" "kv_app_read" {
 
 # Whoever runs `terraform apply` must be able to write them.
 resource "azurerm_role_assignment" "kv_deployer_write" {
+  count = var.manage_role_assignments ? 1 : 0
+
   scope                = azurerm_key_vault.main.id
   role_definition_name = "Key Vault Secrets Officer"
   principal_id         = data.azurerm_client_config.current.object_id

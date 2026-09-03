@@ -20,7 +20,7 @@ output "registry_name" {
 
 output "resource_group_name" {
   description = "Resource group holding every resource in this deployment."
-  value       = azurerm_resource_group.main.name
+  value       = local.resource_group_name
 }
 
 output "migration_job_name" {
@@ -63,4 +63,32 @@ output "secret_key" {
   description = "Session signing key. Also stored in Key Vault as `secret-key`. Back this up: losing it invalidates every session and every encrypted column."
   value       = local.secret_key
   sensitive   = true
+}
+
+# ---------------------------------------------------------------------------
+# For manage_role_assignments = false
+#
+# The three scope/principal pairs an administrator needs in order to grant the
+# access Terraform was not permitted to grant itself. Printed unconditionally so
+# they are available before the apply that needs them has succeeded.
+# ---------------------------------------------------------------------------
+
+output "app_identity_principal_id" {
+  description = "Object ID of the user-assigned identity the containers run as. Needs AcrPull on the registry and Key Vault Secrets User on the vault."
+  value       = azurerm_user_assigned_identity.app.principal_id
+}
+
+output "registry_id" {
+  description = "Resource ID of the container registry — the scope for the app identity's AcrPull assignment."
+  value       = azurerm_container_registry.main.id
+}
+
+output "key_vault_id" {
+  description = "Resource ID of the key vault — the scope for both Key Vault role assignments."
+  value       = azurerm_key_vault.main.id
+}
+
+output "deployer_principal_id" {
+  description = "Object ID Terraform is authenticating as. Needs Key Vault Secrets Officer on the vault, or the apply cannot write secret values."
+  value       = data.azurerm_client_config.current.object_id
 }

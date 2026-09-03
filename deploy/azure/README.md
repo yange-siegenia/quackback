@@ -114,6 +114,72 @@ HTTP is rejected with a 403.
 
 ## Deploying
 
+### Prerequisite: subscription-level registrations
+
+The provider is configured with `resource_provider_registrations = "none"`, so
+it will not try to register anything on your behalf. That is deliberate —
+registration is a subscription-scope write, and the default provider behaviour
+attempts around thirty of them, most for services this stack never creates. On a
+subscription where you hold rights only on a resource group, that fails before
+Terraform plans anything, with a wall of errors about Databricks and HDInsight
+that has nothing to do with your deployment.
+
+Someone with subscription rights registers these once. `Microsoft.App` and the
+rest are frequently already on; `Microsoft.DBforPostgreSQL` frequently is not:
+
+```bash
+for p in Microsoft.App Microsoft.DBforPostgreSQL Microsoft.ContainerRegistry \
+         Microsoft.KeyVault Microsoft.Storage Microsoft.OperationalInsights \
+         Microsoft.Network Microsoft.ManagedIdentity; do
+  az provider register -n "$p"
+done
+
+# Confirm before applying — registration is asynchronous and takes a few minutes.
+az provider list --query "[?namespace=='Microsoft.DBforPostgreSQL'].registrationState" -o tsv
+```
+
+`terraform plan` does **not** check registration, so an unregistered provider
+surfaces only at apply, as a confusing "API version was not found" error.
+
+### If you are not an Owner of the subscription
+
+Two toggles cover the common enterprise case where a platform team owns the
+subscription and gives you one resource group:
+
+```hcl
+create_resource_group   = false
+resource_group_name     = "rg-quackback-prod-01"  # must already exist
+manage_role_assignments = false
+location                = "germanywestcentral"    # must match that group's region
+```
+
+`create_resource_group = false` matters because creating a group is a
+subscription-level write that Contributor on a group does not grant.
+`manage_role_assignments = false` matters because Contributor explicitly
+excludes `Microsoft.Authorization/*/Write`, so Terraform cannot grant the access
+the workloads need. With it off, apply once to create the identity, registry and
+vault, then have an administrator run:
+
+```bash
+cd deploy/azure/terraform
+IDENTITY=$(terraform output -raw app_identity_principal_id)
+DEPLOYER=$(terraform output -raw deployer_principal_id)
+ACR=$(terraform output -raw registry_id)
+KV=$(terraform output -raw key_vault_id)
+
+az role assignment create --assignee-object-id "$IDENTITY" \
+  --assignee-principal-type ServicePrincipal --role AcrPull --scope "$ACR"
+az role assignment create --assignee-object-id "$IDENTITY" \
+  --assignee-principal-type ServicePrincipal \
+  --role "Key Vault Secrets User" --scope "$KV"
+az role assignment create --assignee-object-id "$DEPLOYER" \
+  --role "Key Vault Secrets Officer" --scope "$KV"
+```
+
+Then apply again. The first apply stops when it tries to write Key Vault
+secrets, because the deployer cannot yet write them — that is expected, and the
+identity and vault it already created are what the commands above need.
+
 ### One-time
 
 1. **Remote state.** Create a storage account and a `tfstate` container. The
@@ -123,7 +189,7 @@ HTTP is rejected with a 403.
 2. **OIDC federation.** Register an app, federate it with this repository, and
    grant it Contributor + Role Based Access Control Administrator on the
    subscription (the latter is needed because Terraform creates role
-   assignments).
+   assignments; omit it if you set `manage_role_assignments = false`).
 
 3. **Repository variables**: `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`,
    `AZURE_SUBSCRIPTION_ID`, `TFSTATE_RESOURCE_GROUP`, `TFSTATE_STORAGE_ACCOUNT`.
@@ -209,3 +275,63 @@ which are the two the migration runner actually creates.
 **Scaling the web tier** is safe within the connection budget above. Scaling the
 worker adds queue throughput; the periodic sweeps hold a cross-instance sweep
 lock, so extra workers do not duplicate them.
+
+---
+
+## Retiring a single-VM deployment
+
+If you already run Quackback on a VM, keep it serving until the new stack has
+proven itself, then cut over. The two deployments can coexist: they share
+nothing except the database contents you choose to copy.
+
+1. **Stand the Azure stack up alongside the VM.** Do not point DNS at it yet.
+   Use the Container Apps default FQDN (`terraform output -raw app_url`) to
+   exercise it.
+
+2. **Move the data.** Stop the app on the VM first so nothing writes during the
+   dump — a dump taken under load can capture a job mid-flight.
+
+   ```bash
+   # On the VM
+   docker compose stop web worker
+   pg_dump --format=custom --no-owner --no-acl "$DATABASE_URL" > quackback.dump
+   ```
+
+   Postgres is on a private VNet, so restore from something inside it — the
+   simplest is a one-off Container Apps job on the same environment, or a
+   jumpbox in `snet-apps`. Restoring from a GitHub runner will not work, and
+   that is the point of the private network rather than a defect.
+
+3. **Move the uploads.** If the VM used MinIO or local disk, copy the objects
+   into the blob container, preserving key names exactly — object names encode
+   the workspace namespace, and rewriting them detaches every stored reference.
+
+   ```bash
+   az storage blob upload-batch \
+     --account-name "$(terraform output -raw storage_account_name)" \
+     --destination quackback --source ./minio-data/quackback \
+     --auth-mode login
+   ```
+
+4. **Carry `SECRET_KEY` across.** Set `secret_key` in `terraform.tfvars` to the
+   VM's existing value before the cutover apply. A fresh key invalidates every
+   session and makes existing encrypted columns unreadable — this is the one
+   irreversible mistake in the migration.
+
+5. **Cut DNS over**, watch `/api/health/ready` and the logs, and keep the VM
+   stopped but intact for a rollback window.
+
+6. **Decommission.** Deleting the VM leaves its disk, NIC, public IP and NSG
+   behind as separate billable resources; they are not cascaded.
+
+   ```bash
+   az vm delete -g <rg> -n <vm> --yes
+   az network nic delete -g <rg> -n <nic>
+   az network public-ip delete -g <rg> -n <pip>
+   az disk delete -g <rg> -n <osdisk> --yes
+   az network nsg delete -g <rg> -n <nsg>
+   ```
+
+   Take a final disk snapshot first if you want a cold rollback after the VM is
+   gone. If the new stack shares the VM's resource group, delete the VM's
+   resources individually rather than deleting the group.
