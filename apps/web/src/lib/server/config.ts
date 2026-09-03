@@ -171,7 +171,28 @@ const configSchema = z
     emailSesIdentityAccessKeyId: z.string().optional(),
     emailSesIdentitySecretAccessKey: z.string().optional(),
 
-    // S3 (optional)
+    // Object storage (optional)
+    /**
+     * Which backend the object-storage wire operations run against.
+     *
+     * `s3` is every existing install: AWS, MinIO, R2, or anything speaking the
+     * S3 API. `azure_blob` targets Azure Blob Storage, which is NOT
+     * S3-compatible — it has no S3 endpoint at all, so an endpoint override
+     * cannot bridge it and a driver is the only way.
+     *
+     * The `S3_*` variables keep their names under both drivers because they
+     * name *roles*, not vendors, and every one of the ~36 call sites, the
+     * placement/credential split and the workspace namespacing are
+     * driver-independent. Under `azure_blob` they read:
+     *   S3_BUCKET            -> container name
+     *   S3_ACCESS_KEY_ID     -> storage account name
+     *   S3_SECRET_ACCESS_KEY -> storage account key
+     *   S3_ENDPOINT          -> blob endpoint; defaults to
+     *                           https://<account>.blob.core.windows.net
+     * Renaming them would fork the config surface per driver for cosmetics and
+     * break every existing deployment's env file.
+     */
+    storageDriver: z.enum(['s3', 'azure_blob']).default('s3'),
     s3Endpoint: z.string().optional(),
     s3Bucket: z.string().optional(),
     s3Region: z.string().optional(),
@@ -298,6 +319,7 @@ function buildConfigFromEnv(): unknown {
     emailSesIdentitySecretAccessKey: env('EMAIL_SES_IDENTITY_SECRET_ACCESS_KEY'),
 
     // S3
+    storageDriver: env('STORAGE_DRIVER'),
     s3Endpoint: env('S3_ENDPOINT'),
     s3Bucket: env('S3_BUCKET'),
     s3Region: env('S3_REGION'),
@@ -507,6 +529,9 @@ export const config = {
   },
 
   // S3
+  get storageDriver() {
+    return loadConfig().storageDriver
+  },
   get s3Endpoint() {
     return loadConfig().s3Endpoint
   },

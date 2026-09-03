@@ -83,6 +83,7 @@ import {
   SINGLE_WORKSPACE_NAMESPACE,
 } from '@/lib/server/workspaces/workspace-keyed'
 import { absolutizeOffHostAssetUrl, storedAssetKeyFromSrc } from './asset-url'
+import { createAzureBlobOperations } from './azure-blob'
 import { composeNamespacedKey, workspaceNamespace } from './namespace'
 import { currentWorkspaceId } from './workspace-scope'
 
@@ -129,6 +130,26 @@ interface StoragePlacement {
 }
 
 /**
+ * The region to use when the environment does not supply one.
+ *
+ * Azure Blob has no region parameter: an account's location is fixed at
+ * creation and encoded in its endpoint, so there is nothing for an operator to
+ * put in `S3_REGION`. Requiring it anyway would be a pure trap — a mandatory
+ * variable whose value is never read and cannot be got wrong or right.
+ *
+ * The field stays on the placement (it is shared with the S3 driver, and the
+ * client cache key hashes it) so it gets a fixed, obviously-inert filler rather
+ * than becoming optional and forcing every consumer to handle `undefined`.
+ */
+const AZURE_PLACEHOLDER_REGION = 'azure'
+
+/** The configured region, or the inert filler when the driver has no use for one. */
+function effectiveRegion(): string | undefined {
+  if (config.s3Region) return config.s3Region
+  return config.storageDriver === 'azure_blob' ? AZURE_PLACEHOLDER_REGION : undefined
+}
+
+/**
  * The active workspace's placement, or the process-wide one when unscoped.
  * Returns null when storage is not configured at all.
  */
@@ -145,11 +166,12 @@ function getStoragePlacementOrNull(): StoragePlacement | null {
       originUrl: workspace.routing.baseUrl,
     }
   }
-  if (!config.s3Bucket || !config.s3Region) return null
+  const region = effectiveRegion()
+  if (!config.s3Bucket || !region) return null
   return {
     endpoint: config.s3Endpoint || undefined,
     bucket: config.s3Bucket,
-    region: config.s3Region,
+    region,
     forcePathStyle: config.s3ForcePathStyle ?? true,
     publicUrl: config.s3PublicUrl || undefined,
     originUrl: config.baseUrl,
@@ -230,7 +252,12 @@ function resolveStorageCredentials(): StorageCredentials {
  */
 export function isS3Configured(): boolean {
   if (getCurrentWorkspace()) return true
-  return !!(config.s3Bucket && config.s3Region && config.s3AccessKeyId && config.s3SecretAccessKey)
+  return !!(
+    config.s3Bucket &&
+    effectiveRegion() &&
+    config.s3AccessKeyId &&
+    config.s3SecretAccessKey
+  )
 }
 
 /**
@@ -518,6 +545,37 @@ function workspaceStorage(selfReportedWorkspaceId: WorkspaceId): WorkspaceStorag
    * branch in which a command runs against the un-namespaced key.
    */
   const objectName = (key: string): string => composeNamespacedKey(selfReportedWorkspaceId, key)
+
+  const identity = {
+    selfReportedWorkspaceId,
+    namespace: workspaceNamespace(selfReportedWorkspaceId),
+    objectName,
+  }
+
+  /*
+   * The backend is chosen once, here, from the same captured connection as
+   * everything else — not per operation. Azure Blob speaks no S3 API, so this
+   * is a driver switch rather than an endpoint override; see
+   * `storage/azure-blob.ts`.
+   *
+   * Namespacing stays on this side of the switch deliberately: every driver
+   * receives names that `composeNamespacedKey` has already validated, so the
+   * property that keeps one workspace out of another's objects cannot vary by
+   * backend.
+   */
+  if (config.storageDriver === 'azure_blob') {
+    const ops = createAzureBlobOperations(connection)
+    return {
+      ...identity,
+      presignPut: (key, contentType, expiresIn) =>
+        ops.presignPut(objectName(key), contentType, expiresIn),
+      put: (key, body, contentType) => ops.put(objectName(key), body, contentType),
+      get: (key) => ops.get(objectName(key)),
+      presignGet: (key, expiresIn, downloadName) =>
+        ops.presignGet(objectName(key), expiresIn, downloadName),
+      remove: (key) => ops.remove(objectName(key)),
+    }
+  }
 
   return {
     selfReportedWorkspaceId,
