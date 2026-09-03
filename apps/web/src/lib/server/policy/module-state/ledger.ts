@@ -197,6 +197,31 @@ export const MODULE_STATE_LEDGER: readonly LedgerEntry[] = [
       'workspace B.',
   },
   {
+    file: 'apps/web/src/lib/server/storage/azure-blob.ts',
+    name: '_azureModule',
+    category: 'fleet-wide',
+    reason:
+      'The memoized `await import("@azure/storage-blob")` module namespace. It is the SDK itself, ' +
+      'not anything derived from a workspace: there is no workspace input to the import, so every ' +
+      'workspace that resolves it resolves the identical object. Held because the dynamic import ' +
+      'keeps the Azure SDK out of the startup path for the S3 driver, and re-awaiting it per call ' +
+      'would put a module-registry lookup on every object read.',
+  },
+  {
+    file: 'apps/web/src/lib/server/storage/azure-blob.ts',
+    name: 'blobClients',
+    category: 'content-addressed',
+    reason:
+      'The Blob service client, keyed by the connection parameters it is built from — the resolved ' +
+      'endpoint and a hash of the account name and key. The reasoning is `s3Clients` above, ' +
+      'unchanged by the backend: a client is a signer and a connection pool, so a cross-workspace ' +
+      'hit returns one constructed from byte-identical arguments to those the asking workspace ' +
+      'would have passed. Keying by the active workspace would be the weaker choice, because a ' +
+      'WorkspaceStorage captured under one scope and used under another would then reach its own ' +
+      "container through the later scope's account and credential. The container is not read from " +
+      'here at all — it is captured with the credentials at construction.',
+  },
+  {
     file: 'apps/web/src/lib/server/storage/s3.ts',
     name: 's3Clients',
     category: 'content-addressed',
