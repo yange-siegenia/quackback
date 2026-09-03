@@ -70,3 +70,15 @@ docs/superpowers/
 
 # Local scratch
 scratchpad/
+
+# Terraform
+# Provider plugins and local state. The lock file IS committed so CI and a
+# laptop resolve identical provider versions; state and tfvars are not, because
+# they hold the database password and the session signing key.
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+crash.log
+tfplan

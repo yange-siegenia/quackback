@@ -1,0 +1,53 @@
+# Copy to terraform.tfvars and fill in. Everything here has a working default
+# except the values that are genuinely deployment-specific.
+
+name_prefix = "quackback"
+location    = "westeurope"
+
+# Pin to a released tag in production; the deploy workflow passes this in.
+image_tag = "latest"
+
+# --- Public hostname ------------------------------------------------------
+# Leave empty to use the Container Apps default FQDN. If you set this, add the
+# custom domain + certificate to the web container app as well, and point the
+# hostname at the `web_fqdn` output.
+# custom_domain = "feedback.example.com"
+
+# Container Apps ingress is 1 hop. Front Door or another CDN in front makes it 2.
+trusted_proxy_hops = 1
+
+# --- Secrets --------------------------------------------------------------
+# Leave empty and Terraform generates one into Key Vault. Set it explicitly
+# only when migrating an existing instance — changing it invalidates every
+# session and makes existing encrypted columns unreadable.
+# secret_key = ""
+
+# --- Scale ----------------------------------------------------------------
+web_min_replicas    = 1
+web_max_replicas    = 10
+worker_max_replicas = 2
+
+# The connection budget. Keep
+#   (web_max + worker_max) * (db_pool_max + 1) + headroom < db_max_connections
+db_pool_max        = 10
+db_max_connections = 200
+
+# --- Database -------------------------------------------------------------
+postgres_sku        = "GP_Standard_D2s_v3"
+postgres_storage_mb = 32768
+postgres_version    = "16"
+
+# --- Email ----------------------------------------------------------------
+# Required for invites, magic links and notifications. Without it, mail is
+# logged to stdout instead of sent.
+# email_from          = "Quackback <noreply@example.com>"
+# email_smtp_host     = "smtp.azurecomm.net"
+# email_smtp_port     = 587
+# email_smtp_user     = ""
+# email_smtp_password = ""
+
+# --- AI (optional) --------------------------------------------------------
+# Enables summaries, duplicate detection and feedback extraction. Point at
+# Azure OpenAI to keep inference inside Azure.
+# openai_api_key  = ""
+# openai_base_url = "https://<your-resource>.openai.azure.com/openai/v1"

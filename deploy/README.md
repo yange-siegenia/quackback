@@ -4,10 +4,11 @@ This directory contains deployment configurations for Quackback.
 
 ## Deployment Options
 
-| Option                                     | For                          | Infrastructure       |
-| ------------------------------------------ | ---------------------------- | -------------------- |
-| **[Self-Hosted](./self-hosted/README.md)** | Community & Enterprise users | Docker, Bun, any VPS |
-| **[Cloud](./cloud/README.md)**             | Quackback team only          | Cloudflare Workers   |
+| Option                                     | For                          | Infrastructure                    |
+| ------------------------------------------ | ---------------------------- | --------------------------------- |
+| **[Self-Hosted](./self-hosted/README.md)** | Community & Enterprise users | Docker, Bun, any VPS              |
+| **[Azure](./azure/README.md)**             | Cloud-native self-hosting    | Container Apps, Postgres, Blob    |
+| **[Cloud](./cloud/README.md)**             | Quackback team only          | Cloudflare Workers                |
 
 ---
 
@@ -40,6 +41,26 @@ docker compose -f docker-compose.prod.yml up -d
 > The root `docker-compose.yml` is for **local development only** (datastores, no app service). Use `docker-compose.prod.yml` to self-host — it bundles the app plus Postgres and MinIO with hardened defaults.
 
 See the [Self-Hosted Guide](./self-hosted/README.md) for complete documentation.
+
+---
+
+## Azure (Container Apps)
+
+A cloud-native deployment where each concern is a managed service rather than a
+process on a single VM: the web and background tiers are separate Container
+Apps, migrations are a Container Apps Job, and Postgres and Blob Storage are
+managed and private.
+
+```bash
+cd deploy/azure/terraform
+cp terraform.tfvars.example terraform.tfvars   # then edit
+terraform init -backend-config=...             # see the guide
+terraform apply
+```
+
+See the [Azure Guide](./azure/README.md) for the architecture, the Terraform, the
+GitHub Actions workflows, and the deployment gotchas (no connection pooler in
+front of the app, the worker's fixed minimum replica, `TRUSTED_PROXY_HOPS`).
 
 ---
 

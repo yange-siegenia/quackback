@@ -1,0 +1,109 @@
+# ============================================================================
+# Terraform for the Azure deployment
+#
+# Plan on pull requests that touch the infrastructure, apply only on an
+# explicit dispatch. Infrastructure changes here can destroy a database, so
+# apply is never automatic on merge.
+# ============================================================================
+name: Azure Infrastructure
+
+on:
+  pull_request:
+    paths: ['deploy/azure/terraform/**', '.github/workflows/azure-infra.yml']
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'Terraform action'
+        required: true
+        default: plan
+        type: choice
+        options: [plan, apply]
+
+permissions:
+  contents: read
+  id-token: write
+  pull-requests: write
+
+concurrency:
+  # Terraform state is not safe to operate on concurrently.
+  group: azure-infra
+  cancel-in-progress: false
+
+defaults:
+  run:
+    working-directory: deploy/azure/terraform
+
+jobs:
+  terraform:
+    runs-on: ubuntu-latest
+    environment: production
+
+    env:
+      # Authenticate the AzureRM provider through the same OIDC federation the
+      # deploy workflow uses, so there is no client secret anywhere.
+      ARM_USE_OIDC: 'true'
+      ARM_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+      ARM_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.9.8
+
+      - name: Format check
+        run: terraform fmt -check -recursive
+
+      # Remote state, so a plan from CI and an apply from a laptop cannot
+      # diverge. Create the storage account once, out of band — see the README.
+      - name: Init
+        run: |
+          terraform init \
+            -backend-config="resource_group_name=${{ vars.TFSTATE_RESOURCE_GROUP }}" \
+            -backend-config="storage_account_name=${{ vars.TFSTATE_STORAGE_ACCOUNT }}" \
+            -backend-config="container_name=tfstate" \
+            -backend-config="key=quackback.tfstate" \
+            -backend-config="use_oidc=true"
+
+      - name: Validate
+        run: terraform validate
+
+      - name: Plan
+        id: plan
+        run: terraform plan -no-color -input=false -out=tfplan
+        continue-on-error: true
+
+      - name: Comment the plan on the pull request
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs')
+            const { execSync } = require('child_process')
+            const cwd = 'deploy/azure/terraform'
+            let plan = ''
+            try {
+              plan = execSync('terraform show -no-color tfplan', { cwd }).toString()
+            } catch (e) {
+              plan = 'Plan could not be rendered.'
+            }
+            // GitHub caps a comment at 65536 characters.
+            const truncated = plan.length > 60000
+              ? plan.slice(0, 60000) + '\n\n... plan truncated ...'
+              : plan
+            await github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `#### Terraform plan\n\n\`\`\`hcl\n${truncated}\n\`\`\``,
+            })
+
+      - name: Fail if the plan failed
+        if: steps.plan.outcome == 'failure'
+        run: exit 1
+
+      - name: Apply
+        if: github.event_name == 'workflow_dispatch' && inputs.action == 'apply'
+        run: terraform apply -input=false -auto-approve tfplan

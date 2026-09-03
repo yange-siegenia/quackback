@@ -1,0 +1,191 @@
+# ============================================================================
+# Build and deploy Quackback to Azure Container Apps
+#
+# Ordering is the whole point of this workflow:
+#
+#   build  ->  migrate  ->  roll web + worker
+#
+# Migrations run as a Container Apps Job, not from this runner. Postgres has no
+# public endpoint (deploy/azure/terraform/database.tf), so the runner cannot
+# reach it; the Job runs inside the VNet. It also means the schema is migrated
+# exactly once, by one process, instead of being raced by every starting
+# replica — which is why both apps set SKIP_MIGRATIONS=true.
+#
+# Required repository configuration:
+#   secrets: none (authentication is OIDC — no stored credentials)
+#   vars:    AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID,
+#            AZURE_RESOURCE_GROUP, AZURE_REGISTRY, AZURE_WEB_APP,
+#            AZURE_WORKER_APP, AZURE_MIGRATE_JOB
+#   (the last five are Terraform outputs)
+# ============================================================================
+name: Deploy to Azure
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: 'Image tag to build and deploy'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+  id-token: write # OIDC federation with Entra ID
+
+concurrency:
+  # Never let two deploys interleave a migration with a rollout.
+  group: azure-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve image tag
+        id: meta
+        run: |
+          if [ -n "${{ inputs.image_tag }}" ]; then
+            TAG="${{ inputs.image_tag }}"
+          elif [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            TAG="${GITHUB_REF_NAME#v}"
+          else
+            TAG="sha-$(git rev-parse --short HEAD)"
+          fi
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "Deploying tag: ${TAG}"
+
+      # The app's version banner comes from apps/web/package.json at build time
+      # (__APP_VERSION__), so a release tag that disagrees with it ships a build
+      # that misreports its own version.
+      - name: Verify package version matches the release tag
+        if: github.ref_type == 'tag'
+        run: |
+          PKG=$(node -p "require('./apps/web/package.json').version")
+          if [ "$PKG" != "${{ steps.meta.outputs.tag }}" ]; then
+            echo "::error::apps/web/package.json is $PKG but the tag is ${{ steps.meta.outputs.tag }}"
+            exit 1
+          fi
+
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Log in to the container registry
+        run: az acr login --name "${{ vars.AZURE_REGISTRY }}"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/web/Dockerfile
+          push: true
+          tags: |
+            ${{ vars.AZURE_REGISTRY }}.azurecr.io/quackback:${{ steps.meta.outputs.tag }}
+            ${{ vars.AZURE_REGISTRY }}.azurecr.io/quackback:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # ---------------------------------------------------------------------
+      # Migrate, and refuse to deploy if it fails.
+      # ---------------------------------------------------------------------
+      - name: Run database migrations
+        env:
+          IMAGE: ${{ vars.AZURE_REGISTRY }}.azurecr.io/quackback:${{ steps.meta.outputs.tag }}
+        run: |
+          set -euo pipefail
+
+          # Pin the job to the image being deployed, so the schema is migrated
+          # by the same build that is about to serve it.
+          az containerapp job update \
+            --name "${{ vars.AZURE_MIGRATE_JOB }}" \
+            --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
+            --image "$IMAGE" \
+            --output none
+
+          EXECUTION=$(az containerapp job start \
+            --name "${{ vars.AZURE_MIGRATE_JOB }}" \
+            --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
+            --query 'name' -o tsv)
+          echo "Migration execution: $EXECUTION"
+
+          # Poll to a terminal state. A migration that is still running when the
+          # workflow gives up must fail the deploy rather than let the rollout
+          # proceed against a half-migrated schema.
+          for _ in $(seq 1 120); do
+            STATUS=$(az containerapp job execution show \
+              --name "${{ vars.AZURE_MIGRATE_JOB }}" \
+              --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
+              --job-execution-name "$EXECUTION" \
+              --query 'properties.status' -o tsv)
+            echo "  status: $STATUS"
+            case "$STATUS" in
+              Succeeded) echo "Migrations complete."; exit 0 ;;
+              Failed|Cancelled)
+                echo "::error::Migration job $STATUS — not deploying."
+                az containerapp job logs show \
+                  --name "${{ vars.AZURE_MIGRATE_JOB }}" \
+                  --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
+                  --job-execution-name "$EXECUTION" \
+                  --container migrate --tail 200 || true
+                exit 1 ;;
+            esac
+            sleep 10
+          done
+
+          echo "::error::Migration job did not finish within 20 minutes — not deploying."
+          exit 1
+
+      # ---------------------------------------------------------------------
+      # Roll the tiers. Web first: it is the one with health probes, so a bad
+      # image is caught by a failing readiness check before the worker — which
+      # has no ingress and therefore no probe — is touched.
+      # ---------------------------------------------------------------------
+      - name: Deploy web tier
+        run: |
+          az containerapp update \
+            --name "${{ vars.AZURE_WEB_APP }}" \
+            --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
+            --image "${{ vars.AZURE_REGISTRY }}.azurecr.io/quackback:${{ steps.meta.outputs.tag }}" \
+            --output none
+
+      - name: Deploy worker tier
+        run: |
+          az containerapp update \
+            --name "${{ vars.AZURE_WORKER_APP }}" \
+            --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
+            --image "${{ vars.AZURE_REGISTRY }}.azurecr.io/quackback:${{ steps.meta.outputs.tag }}" \
+            --output none
+
+      - name: Verify the deployment is serving
+        run: |
+          set -euo pipefail
+          FQDN=$(az containerapp show \
+            --name "${{ vars.AZURE_WEB_APP }}" \
+            --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
+            --query 'properties.configuration.ingress.fqdn' -o tsv)
+
+          # The readiness probe is the app's own answer to "can I serve?" — it
+          # checks the database. Polling it here turns a silently broken rollout
+          # into a failed workflow.
+          for _ in $(seq 1 30); do
+            CODE=$(curl -s -o /dev/null -w '%{http_code}' "https://${FQDN}/api/health/ready" || true)
+            echo "  https://${FQDN}/api/health/ready -> ${CODE}"
+            if [ "$CODE" = "200" ]; then
+              echo "Deployment healthy."
+              exit 0
+            fi
+            sleep 10
+          done
+
+          echo "::error::Web tier did not become ready."
+          exit 1
