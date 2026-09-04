@@ -17,6 +17,10 @@ process on one VM.
 
 Everything lives in `deploy/azure/terraform/`.
 
+> **Picking this up mid-flight?** [`HANDOVER.md`](./HANDOVER.md) records the
+> current deployment status — what is verified, what is not, and the next
+> concrete steps.
+
 ---
 
 ## Why this shape
