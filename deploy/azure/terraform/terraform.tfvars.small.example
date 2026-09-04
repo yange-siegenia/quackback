@@ -1,0 +1,39 @@
+# ---------------------------------------------------------------------------
+# Small profile — internal tools and low-traffic instances
+#
+# Copy to terraform.tfvars alongside the settings from terraform.tfvars.example.
+#
+# The defaults in variables.tf are already sized for this shape. This file makes
+# the choices explicit, and is the place to start if you are deploying Quackback
+# for a team rather than for the public: tens of items a year, a handful of
+# users, and a day of lost data would be an annoyance rather than an incident.
+#
+# Roughly EUR 30-40/month, nearly all of it the database. Treat that as a
+# ballpark, not a quote — check the Azure pricing calculator for your region.
+# ---------------------------------------------------------------------------
+
+# One container app running both tiers instead of two always-on replicas.
+# Halves the compute bill. Flip to false to split them; no data migration.
+combined_role = true
+
+# Burstable. Accrues CPU credits while idle and spends them under load, which
+# suits bursty low volume and does not suit sustained traffic.
+postgres_sku        = "B_Standard_B1ms"
+postgres_storage_mb = 32768 # 32 GB, the Azure minimum. Can grow, never shrink.
+
+# The Azure minimum. Point-in-time restore within this window.
+postgres_backup_retention_days = 7
+postgres_geo_redundant_backup  = false
+
+# Autoscaling needs concurrency to act on. A quiet instance sits at the minimum
+# indefinitely; the headroom is here for a demo day, not for daily traffic.
+web_min_replicas = 1
+web_max_replicas = 2
+
+web_cpu    = 0.5
+web_memory = "1Gi"
+
+# Well under what a single burstable server allows. See the connection-budget
+# note on db_max_connections in variables.tf before raising replica counts.
+db_max_connections = 50
+db_pool_max        = 5

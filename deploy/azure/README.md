@@ -112,6 +112,42 @@ HTTP is rejected with a 403.
 
 ---
 
+## Sizing: match the deployment to the workload
+
+The defaults target a small deployment — an internal tool or an early public
+instance. Autoscaling headroom and tier separation are available but off by
+default, because both cost money continuously and only pay off under real
+concurrency.
+
+| | Default (small) | Busy public instance |
+| --- | --- | --- |
+| `combined_role` | `true` in the small profile — one app, `QUACKBACK_ROLE=all` | `false` — web and worker scale separately |
+| `postgres_sku` | `B_Standard_B1ms` (burstable) | `GP_Standard_D2s_v3` or larger |
+| `web_max_replicas` | 2–3 | 10+, within the connection budget |
+| `postgres_backup_retention_days` | 7 (Azure minimum) | 14–35 |
+| `postgres_geo_redundant_backup` | `false` | `true` |
+
+`terraform.tfvars.small.example` collects the small settings in one file with
+the reasoning attached. Copy it alongside `terraform.tfvars.example`.
+
+**On `combined_role`.** Splitting web and worker is the better shape under load:
+the tiers scale on unrelated signals, and a traffic spike cannot then starve
+background jobs of CPU. That separation costs a second always-on replica, which
+a quiet instance never benefits from. Combining is reversible — flip the
+variable and re-apply, no data migration — so start combined and split when
+something actually needs it.
+
+Combining forces a minimum of one replica. The app is then also the worker, and
+the scheduled sweeps are `setInterval` timers in a live process: an app scaled
+to zero does not defer that work, it never runs it.
+
+**On burstable Postgres.** `B_Standard_B1ms` accrues CPU credits while idle and
+spends them under load. Excellent for bursty low volume; it throttles when the
+credits run out, so it is the wrong choice for sustained traffic. Changing SKU
+later is an in-place resize with a restart, not a rebuild.
+
+---
+
 ## Deploying
 
 ### Prerequisite: subscription-level registrations
@@ -214,7 +250,7 @@ identity and vault it already created are what the commands above need.
    terraform output -raw registry_name         # -> AZURE_REGISTRY
    terraform output -raw resource_group_name   # -> AZURE_RESOURCE_GROUP
    terraform output -raw web_app_name          # -> AZURE_WEB_APP
-   terraform output -raw worker_app_name       # -> AZURE_WORKER_APP
+   terraform output -raw worker_app_name       # -> AZURE_WORKER_APP (empty under combined_role; set the variable to an empty string and the deploy workflow skips the worker step)
    terraform output -raw migration_job_name    # -> AZURE_MIGRATE_JOB
    ```
 

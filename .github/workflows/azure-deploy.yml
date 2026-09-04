@@ -158,7 +158,11 @@ jobs:
             --image "${{ vars.AZURE_REGISTRY }}.azurecr.io/quackback:${{ steps.meta.outputs.tag }}" \
             --output none
 
+      # Skipped under combined_role, where the web app is also the worker and
+      # AZURE_WORKER_APP is empty. An unguarded `az containerapp update` with an
+      # empty --name fails the release after the web tier has already rolled.
       - name: Deploy worker tier
+        if: vars.AZURE_WORKER_APP != ''
         run: |
           az containerapp update \
             --name "${{ vars.AZURE_WORKER_APP }}" \

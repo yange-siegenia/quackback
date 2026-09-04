@@ -30,6 +30,16 @@ resource "azurerm_container_app_environment" "main" {
 }
 
 locals {
+  # The role the ingress-serving app runs as. Under combined_role it is also the
+  # worker, and the separate worker app is not created.
+  web_role = var.combined_role ? "all" : "web"
+
+  # Combining forces a floor of 1: the sweeps are timers in a live process, so a
+  # zero-replica app that is also the worker never runs them. Without this, a
+  # deployment could set web_min_replicas = 0 for cold-start savings and
+  # silently lose all background work.
+  web_min_replicas = var.combined_role ? max(var.web_min_replicas, 1) : var.web_min_replicas
+
   # Non-secret configuration shared by every role.
   common_env = [
     { name = "PORT", value = "3000" },
@@ -118,7 +128,7 @@ resource "azurerm_container_app" "web" {
   }
 
   template {
-    min_replicas = var.web_min_replicas
+    min_replicas = local.web_min_replicas
     max_replicas = var.web_max_replicas
 
     container {
@@ -145,7 +155,7 @@ resource "azurerm_container_app" "web" {
 
       env {
         name  = "QUACKBACK_ROLE"
-        value = "web"
+        value = local.web_role
       }
 
       # Migrations run in the Job below, before this revision rolls. Leaving
@@ -197,6 +207,8 @@ resource "azurerm_container_app" "web" {
 # ---------------------------------------------------------------------------
 
 resource "azurerm_container_app" "worker" {
+  count = var.combined_role ? 0 : 1
+
   name                         = "${var.name_prefix}-worker"
   resource_group_name          = local.resource_group_name
   container_app_environment_id = azurerm_container_app_environment.main.id

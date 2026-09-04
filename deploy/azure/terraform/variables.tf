@@ -41,6 +41,27 @@ variable "manage_role_assignments" {
   default     = true
 }
 
+variable "combined_role" {
+  description = <<-EOT
+    Run the web and worker tiers as one container app (`QUACKBACK_ROLE=all`)
+    instead of two.
+
+    Splitting them is the better shape under load — the tiers scale on
+    unrelated signals, and a traffic spike then cannot starve background jobs of
+    CPU. But the split costs a second always-on replica, which for a low-traffic
+    instance buys nothing.
+
+    Combining forces `web_min_replicas` to at least 1: the app is now also the
+    worker, and the scheduled sweeps are `setInterval` timers in a live process,
+    so scaling to zero would stop them running at all.
+
+    Reversible. Flipping this back to false splits the tiers again on the next
+    apply, with no data migration.
+  EOT
+  type        = bool
+  default     = false
+}
+
 variable "tags" {
   description = "Tags applied to every resource."
   type        = map(string)
@@ -101,9 +122,9 @@ variable "web_min_replicas" {
 }
 
 variable "web_max_replicas" {
-  description = "Maximum web replicas. Keep web_max + worker_max under the connection budget — see the note on db_max_connections."
+  description = "Maximum web replicas. Keep web_max + worker_max under the connection budget — see the note on db_max_connections. Autoscaling only earns its keep under real concurrency; a low-traffic internal instance will sit at the minimum forever."
   type        = number
-  default     = 10
+  default     = 3
 }
 
 variable "worker_max_replicas" {
@@ -120,27 +141,27 @@ variable "worker_max_replicas" {
 }
 
 variable "web_cpu" {
-  description = "vCPU per web replica. Container Apps requires cpu/memory to come from a fixed set of pairs (0.5/1Gi, 1/2Gi, 2/4Gi, ...)."
+  description = "vCPU per web replica. Container Apps requires cpu/memory to come from a fixed set of pairs (0.5/1Gi, 1/2Gi, 2/4Gi, ...), so this and web_memory must be changed together."
   type        = number
-  default     = 1
+  default     = 0.5
 }
 
 variable "web_memory" {
   description = "Memory per web replica, paired with web_cpu."
   type        = string
-  default     = "2Gi"
+  default     = "1Gi"
 }
 
 variable "worker_cpu" {
-  description = "vCPU per worker replica."
+  description = "vCPU per worker replica. Ignored when combined_role is true."
   type        = number
-  default     = 1
+  default     = 0.5
 }
 
 variable "worker_memory" {
-  description = "Memory per worker replica, paired with worker_cpu."
+  description = "Memory per worker replica, paired with worker_cpu. Ignored when combined_role is true."
   type        = string
-  default     = "2Gi"
+  default     = "1Gi"
 }
 
 # ---------------------------------------------------------------------------
@@ -148,9 +169,9 @@ variable "worker_memory" {
 # ---------------------------------------------------------------------------
 
 variable "postgres_sku" {
-  description = "Flexible Server SKU. GP_Standard_D2s_v3 is a reasonable production floor; B_Standard_B1ms is for evaluation only."
+  description = "Flexible Server SKU. B_Standard_B1ms is burstable and the cheapest that runs this schema comfortably — right for internal tools and low-traffic instances. Step up to GP_Standard_D2s_v3 for a busy public deployment; burstable SKUs accrue CPU credits and throttle when they run out, which is fine for bursty low volume and not for sustained load."
   type        = string
-  default     = "GP_Standard_D2s_v3"
+  default     = "B_Standard_B1ms"
 }
 
 variable "postgres_storage_mb" {
@@ -196,9 +217,9 @@ variable "db_pool_max" {
 }
 
 variable "postgres_backup_retention_days" {
-  description = "Point-in-time restore window, in days."
+  description = "Point-in-time restore window, in days. 7 is the Azure minimum and enough for an internal tool; raise it when losing a day of data would actually hurt."
   type        = number
-  default     = 14
+  default     = 7
 }
 
 variable "postgres_geo_redundant_backup" {

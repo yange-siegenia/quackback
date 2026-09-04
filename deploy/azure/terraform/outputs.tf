@@ -34,8 +34,8 @@ output "web_app_name" {
 }
 
 output "worker_app_name" {
-  description = "Name of the worker container app, for `az containerapp update`."
-  value       = azurerm_container_app.worker.name
+  description = "Name of the worker container app, for `az containerapp update`. Empty when combined_role is true, because the web app is then also the worker and there is nothing separate to roll — the deploy workflow skips the worker step on an empty value."
+  value       = var.combined_role ? "" : azurerm_container_app.worker[0].name
 }
 
 output "key_vault_name" {
