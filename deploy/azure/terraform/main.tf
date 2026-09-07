@@ -15,13 +15,32 @@ resource "random_string" "suffix" {
   special = false
 }
 
+# The key vault gets its own suffix rather than sharing the one above.
+#
+# Vault names are globally unique *and* stay reserved for the whole soft-delete
+# window after deletion. With purge protection enabled the reservation cannot
+# be released early — not even by a subscription owner. So a vault that has to
+# be recreated (a region change, say) needs a new name, and sharing the common
+# suffix would drag the database, registry and storage account into that rename
+# and force them to be rebuilt too.
+#
+# Rotate just the vault with:
+#   terraform apply -replace=random_string.kv_suffix
+resource "random_string" "kv_suffix" {
+  length  = 6
+  lower   = true
+  upper   = false
+  numeric = true
+  special = false
+}
+
 locals {
   suffix = random_string.suffix.result
 
   # Registry and storage account names admit no separators and cap at 24 chars.
   registry_name        = "${var.name_prefix}acr${local.suffix}"
   storage_account_name = "${var.name_prefix}st${local.suffix}"
-  key_vault_name       = "${var.name_prefix}-kv-${local.suffix}"
+  key_vault_name       = "${var.name_prefix}-kv-${random_string.kv_suffix.result}"
 
   database_name  = "quackback"
   blob_container = "quackback"
@@ -30,8 +49,15 @@ locals {
   # rather than through var.resource_group_name directly. Both branches are a
   # reference, so every resource below inherits an implicit dependency on the
   # group and Terraform cannot race ahead of it.
-  resource_group_name     = var.create_resource_group ? azurerm_resource_group.main[0].name : data.azurerm_resource_group.existing[0].name
-  resource_group_location = var.create_resource_group ? azurerm_resource_group.main[0].location : data.azurerm_resource_group.existing[0].location
+  resource_group_name = var.create_resource_group ? azurerm_resource_group.main[0].name : data.azurerm_resource_group.existing[0].name
+
+  # Resources are placed by var.location, not by the resource group's own
+  # region. Azure allows the two to differ, and they have to be allowed to:
+  # an admin-assigned group may sit in a region where a service you need is
+  # capacity-restricted, and the group cannot be moved. The implicit dependency
+  # above rides on resource_group_name, so nothing is lost by not deriving this
+  # from the group.
+  location = var.location
 
   # The public origin. A custom domain wins; otherwise the app is reached on the
   # environment's default domain, which is known before the app itself exists.
@@ -65,7 +91,7 @@ data "azurerm_resource_group" "existing" {
 resource "azurerm_log_analytics_workspace" "main" {
   name                = "${var.name_prefix}-logs"
   resource_group_name = local.resource_group_name
-  location            = local.resource_group_location
+  location            = local.location
   sku                 = "PerGB2018"
   retention_in_days   = 30
   tags                = var.tags
@@ -80,9 +106,12 @@ resource "azurerm_log_analytics_workspace" "main" {
 # ---------------------------------------------------------------------------
 
 resource "azurerm_virtual_network" "main" {
-  name                = "${var.name_prefix}-vnet"
+  # Suffixed like the registry and key vault, because a resource group may
+  # already contain an unrelated `<prefix>-vnet` — a single-VM deployment of
+  # this same app, for instance. Names collide even when address spaces do not.
+  name                = "${var.name_prefix}-vnet-${local.suffix}"
   resource_group_name = local.resource_group_name
-  location            = local.resource_group_location
+  location            = local.location
   address_space       = [var.vnet_address_space]
   tags                = var.tags
 }

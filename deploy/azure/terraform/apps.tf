@@ -17,7 +17,7 @@
 resource "azurerm_container_app_environment" "main" {
   name                = "${var.name_prefix}-env"
   resource_group_name = local.resource_group_name
-  location            = local.resource_group_location
+  location            = local.location
 
   log_analytics_workspace_id = azurerm_log_analytics_workspace.main.id
   infrastructure_subnet_id   = azurerm_subnet.apps.id
@@ -290,7 +290,7 @@ resource "azurerm_container_app" "worker" {
 resource "azurerm_container_app_job" "migrate" {
   name                         = "${var.name_prefix}-migrate"
   resource_group_name          = local.resource_group_name
-  location                     = local.resource_group_location
+  location                     = local.location
   container_app_environment_id = azurerm_container_app_environment.main.id
   tags                         = var.tags
 

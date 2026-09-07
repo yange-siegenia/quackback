@@ -10,7 +10,23 @@ variable "name_prefix" {
 }
 
 variable "location" {
-  description = "Azure region for every resource."
+  description = <<-EOT
+    Azure region for every resource. This is authoritative: resources are
+    placed here even when adopting a resource group that lives elsewhere,
+    which Azure permits.
+
+    Check the region actually offers what you need before committing. Postgres
+    Flexible Server is capacity-restricted in some regions for some
+    subscriptions, and the failure arrives late and cryptically ("the value of
+    'Version' should be in: []"). To verify up front:
+
+      az rest --method get --url "https://management.azure.com/subscriptions/\
+      $(az account show --query id -o tsv)/providers/Microsoft.DBforPostgreSQL\
+      /locations/<region>/capabilities?api-version=2024-08-01" \
+        --query "value[0].restricted"
+
+    "Enabled" means restricted — pick another region or open a support request.
+  EOT
   type        = string
   default     = "westeurope"
 }

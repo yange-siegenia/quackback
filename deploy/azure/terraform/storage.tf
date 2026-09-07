@@ -19,7 +19,7 @@
 resource "azurerm_storage_account" "main" {
   name                = local.storage_account_name
   resource_group_name = local.resource_group_name
-  location            = local.resource_group_location
+  location            = local.location
 
   account_tier             = "Standard"
   account_replication_type = "ZRS"

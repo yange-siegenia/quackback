@@ -10,14 +10,14 @@
 resource "azurerm_user_assigned_identity" "app" {
   name                = "${var.name_prefix}-identity"
   resource_group_name = local.resource_group_name
-  location            = local.resource_group_location
+  location            = local.location
   tags                = var.tags
 }
 
 resource "azurerm_container_registry" "main" {
   name                = local.registry_name
   resource_group_name = local.resource_group_name
-  location            = local.resource_group_location
+  location            = local.location
   sku                 = "Standard"
   # Identity-based pulls only; there is no admin user to leak.
   admin_enabled = false
@@ -39,7 +39,7 @@ resource "azurerm_role_assignment" "acr_pull" {
 resource "azurerm_key_vault" "main" {
   name                = local.key_vault_name
   resource_group_name = local.resource_group_name
-  location            = local.resource_group_location
+  location            = local.location
   tenant_id           = data.azurerm_client_config.current.tenant_id
   sku_name            = "standard"
 

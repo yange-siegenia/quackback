@@ -31,7 +31,7 @@ resource "random_password" "postgres" {
 resource "azurerm_postgresql_flexible_server" "main" {
   name                = "${var.name_prefix}-pg-${local.suffix}"
   resource_group_name = local.resource_group_name
-  location            = local.resource_group_location
+  location            = local.location
 
   version                = var.postgres_version
   administrator_login    = var.postgres_admin_username
@@ -57,6 +57,12 @@ resource "azurerm_postgresql_flexible_server" "main" {
     # Growing storage is allowed; shrinking is not, and Azure will not let a
     # later `terraform apply` quietly attempt it.
     prevent_destroy = false
+
+    # Azure picks an availability zone at creation when none is requested, and
+    # then reports it back. With no `zone` in the config the provider reads
+    # that as a change to "" and refuses, because a zone can only be swapped
+    # with a standby. Ignoring it keeps the server's assigned zone.
+    ignore_changes = [zone]
   }
 }
 
