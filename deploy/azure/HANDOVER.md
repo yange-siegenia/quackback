@@ -1,6 +1,6 @@
 # Azure deployment — handover
 
-Status as of **2026-09-04**. This is a point-in-time note: what exists, what is
+Status as of **2026-09-07**. This is a point-in-time note: what exists, what is
 verified, and what the next person has to do. For how the deployment actually
 works, read [`README.md`](./README.md) instead — this file deliberately does not
 repeat it.
@@ -11,32 +11,90 @@ repeat it.
 
 ## One-line summary
 
-The code and infrastructure are finished and pushed. Nothing has been deployed
-yet, because a subscription-level Azure permission is missing and must be
-granted by an administrator.
+The infrastructure is **deployed and running** in West Europe. What remains is
+three role assignments an administrator has to make, then building and pushing
+the first container image.
 
 ## The blocker
 
-`Microsoft.DBforPostgreSQL` is **not registered** on the subscription.
+Three **role assignments**. `Contributor` on a resource group cannot create
+role assignments, so these cannot be self-served:
+
+| Who | Role | Scope | Why |
+| --- | --- | --- | --- |
+| app managed identity | `AcrPull` | the container registry | pull images |
+| app managed identity | `Key Vault Secrets User` | the key vault | read secrets at runtime |
+| the deploying user | `Key Vault Secrets Officer` | the key vault | write secrets during apply |
+
+`terraform apply` runs cleanly until the Key Vault secrets, then fails three
+times with `403 ForbiddenByRbac` and `Assignment: (not found)`. That is the
+documented two-pass flow, not a fault. Terraform exposes the exact scopes and
+principal IDs as outputs; run `terraform output` to regenerate the commands.
+
+Granting `User Access Administrator` on **only** the resource group would
+remove this step permanently.
+
+### Resolved: Postgres provider registration
+
+`Microsoft.DBforPostgreSQL` was `NotRegistered` and has since been registered
+by an administrator. Verify with:
 
 ```bash
 az provider show -n Microsoft.DBforPostgreSQL --query registrationState -o tsv
-# NotRegistered   <- as of this writing
-# Registering     <- an admin has run it; takes a few minutes
-# Registered      <- you are unblocked
 ```
 
-Registration is a subscription-scope write. Holding Contributor on the target
-resource group is not enough. It is free, creates no resources, changes no
-billing, and is reversible — worth saying explicitly, because the request tends
-to be read as "please provision a database".
+## What is actually deployed
 
-Until it is `Registered`, `terraform apply` fails when it reaches the Postgres
-resource, with an unhelpful API-version error that does not mention
-registration.
+All in **West Europe**, inside the pre-existing `rg-quackback-test-01`
+(which itself sits in Germany West Central — see the region note below):
 
-A second, *optional* grant — `User Access Administrator` on the target resource
-group — would remove the two-pass apply described below. Not required.
+| Resource | Name | State |
+| --- | --- | --- |
+| PostgreSQL Flexible Server | `quackback-pg-rjeec6` | running, `VECTOR,PG_TRGM` enabled, private only |
+| Container Registry | `quackbackacrrjeec6` | running, empty — no image pushed yet |
+| Key Vault | `quackback-kv-8589re` | created, **secrets not yet written** |
+| Container Apps environment | `quackback-env` | running |
+| Storage account + container | `quackbackstrjeec6` | running |
+| Managed identity | `quackback-identity` | created |
+| VNet + subnets + private DNS | `quackback-vnet-rjeec6` | running |
+| Log Analytics | `quackback-logs` | running |
+| Web app / migration job | `quackback-web`, `quackback-migrate` | **not yet created** — blocked on secrets |
+
+Terraform state lives in `stqbtfstate2b798dfd`, container `tfstate`, with blob
+versioning and 30-day soft delete enabled.
+
+> **Authentication note.** The state backend is accessed with the storage
+> account key (`ARM_ACCESS_KEY`), not AAD. `Contributor` is a management-plane
+> role and does not grant blob data-plane access, so `use_azuread_auth` fails
+> with `AuthorizationPermissionMismatch`. Listing the key is permitted.
+
+> **MFA note.** This tenant enforces a Conditional Access authentication
+> context (`acrs: p1`) on management writes. Reads succeed without it, so the
+> failure only appears at the first write. `az` caches tokens *per audience*,
+> and Terraform uses `management.azure.com` while `az` may have only stepped up
+> `management.core.windows.net`. If writes 401 with `RequestDisallowedByAzure`:
+>
+> ```bash
+> az account clear
+> az login --use-device-code --scope "https://management.azure.com/.default" \
+>   --claims-challenge "eyJhY2Nlc3NfdG9rZW4iOnsiYWNycyI6eyJlc3NlbnRpYWwiOnRydWUsInZhbHVlcyI6WyJwMSJdfX19"
+> ```
+
+## Why West Europe and not Germany
+
+Postgres Flexible Server is **capacity-restricted in Germany West Central** for
+this subscription: the capabilities API reports `restricted: Enabled` and
+offers no Burstable SKUs at all. The failure surfaces late and cryptically as
+`the value of 'Version' should be in: []`.
+
+Azure permits resources to live in a different region from their resource
+group, so only `location` changed. West Europe is the Netherlands — still EU,
+so the GDPR position is unchanged.
+
+**If German data residency is a hard requirement**, this is the wrong choice
+and should be revisited before real data exists. The alternative is a support
+request (issue type "Service and subscription limits") to lift the restriction
+in Germany West Central.
 
 ## What was built
 
@@ -71,45 +129,36 @@ Be precise about this, because the gap is where the risk lives.
   403 over plain HTTP. Reasoning about the code did not surface it; running it
   did.
 - `terraform fmt`, `terraform validate`, and `terraform plan` against the **real
-  subscription**. Plan sizes: 29 resources (defaults), 25 (adopting an existing
-  resource group, no role assignments), 24 (also `combined_role = true`).
+  subscription**.
+- **`terraform apply` against the real subscription** — the infrastructure in
+  the table above exists and is running. Four faults were found this way that
+  every clean `plan` had missed; see commit `1384f138b`.
 
 **Not verified:**
 
-- `terraform apply` has **never been run**. No Azure resource has been created.
 - The GitHub Actions workflows have **never been run**.
-
-Expect the first apply and the first workflow run to surface something. That is
-normal and is the honest state of things, not a defect.
+- No container image has been built or pushed, so the app has **never actually
+  started**. Everything below the infrastructure layer is still unproven.
+- The web app and migration job do not exist yet — they are blocked on the Key
+  Vault secrets.
 
 ## Next actions, in order
 
-1. **Get the provider registered.** Chase the admin. Poll with the command
-   above.
+1. **Get the three role assignments made.** See "The blocker" above. Regenerate
+   the exact commands with `terraform output`.
 
-2. **Create the Terraform state backend** — a storage account plus a `tfstate`
-   container, so state is shared rather than stranded on one laptop. Commands
-   are in `README.md` under "One-time".
+2. **Re-run `terraform apply`.** It should complete, writing the three secrets
+   and creating the web app and migration job.
 
-3. **Write `terraform.tfvars`.** Start from `terraform.tfvars.small.example`
-   (this workload is roughly 20 feedback items per year, so the small profile is
-   the right one) and set:
+3. **Build and push the first image.** The registry is empty, so the container
+   app has nothing to run. Note the widget must be built *before* the web app —
+   its `dist/browser.js` is imported via Vite `?raw`.
 
-   ```hcl
-   create_resource_group   = false          # the RG already exists
-   resource_group_name     = "rg-quackback-test-01"
-   location                = "germanywestcentral"
-   manage_role_assignments = false          # unless User Access Administrator was granted
-   combined_role           = true           # web + worker in one container app
+4. **Run the migration job** to create the schema:
+
+   ```bash
+   az containerapp job start -g rg-quackback-test-01 -n quackback-migrate
    ```
-
-4. **`terraform apply`.** Roughly ten minutes, mostly Postgres provisioning.
-
-   **It is expected to stop at the Key Vault secrets** when
-   `manage_role_assignments = false`. This is the documented two-pass flow, not
-   a failure. Terraform prints the exact scopes and principal IDs as outputs; an
-   admin runs three `az role assignment create` commands (see `README.md`), then
-   you re-run apply and it completes.
 
 5. **Wire up GitHub Actions.** Set the repository variables from the Terraform
    outputs: `AZURE_REGISTRY`, `AZURE_RESOURCE_GROUP`, `AZURE_WEB_APP`,
@@ -124,6 +173,29 @@ normal and is the honest state of things, not a defect.
      the real connection path.
 
 7. **Retire the old VM.** See "Retiring a single-VM deployment" in `README.md`.
+
+## If an apply crashes midway
+
+It happened once here, from a transient DNS failure while writing state. The
+dangerous part is not the failed resource — it is that Terraform may have
+changed Azure without recording it, leaving state *behind reality*.
+
+Terraform writes `errored.tfstate` in the working directory when this happens.
+Do not run `apply` again first; that forks the state. Instead:
+
+```bash
+terraform state pull | python3 -c "import sys,json;d=json.load(sys.stdin);print(d['serial'])"
+python3 -c "import json;print(json.load(open('errored.tfstate'))['serial'])"
+# if the local serial is higher, the remote is stale:
+terraform force-unlock -force <LOCK_ID>   # the ID is printed by the failed run
+terraform state push errored.tfstate
+```
+
+**Avoid saved plan files (`-out`) while iterating.** A saved plan encodes
+decisions made against an earlier reality. One replaced the VNet without
+recreating its subnets, because the VNet's *name* was unchanged — only its
+region — so nothing in the plan marked the subnets as affected. Plain
+`terraform apply` plans and applies atomically and does not have this problem.
 
 ## Things that will cost you if forgotten
 
