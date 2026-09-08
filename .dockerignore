@@ -42,6 +42,15 @@ e2e
 **/Dockerfile*
 docker-compose*.yml
 
+# Infrastructure as code — never part of an application image, and the
+# provider binaries under .terraform are hundreds of megabytes.
+deploy
+**/.terraform
+*.tfstate
+*.tfstate.*
+*.tfplan
+*.tfvars
+
 # Misc
 *.md
 !README.md
