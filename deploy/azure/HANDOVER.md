@@ -11,9 +11,9 @@ repeat it.
 
 ## One-line summary
 
-The application is **deployed, running and serving traffic** in West Europe,
-behind Entra ID sign-in. Storage and migrations are proven against the real
-infrastructure. What remains is CI/CD and decommissioning the old VM.
+The application is **deployed, running and serving traffic** in West Europe.
+Storage and migrations are proven against the real infrastructure. What remains
+is CI/CD, an access-control decision, and decommissioning the old VM.
 
 ## The remaining blocker: CI/CD
 
@@ -65,7 +65,7 @@ All in **West Europe**, inside the pre-existing `rg-quackback-test-01`
 | Managed identity | `quackback-identity` | created |
 | VNet + subnets + private DNS | `quackback-vnet-rjeec6` | running |
 | Log Analytics | `quackback-logs` | running |
-| Web app | `quackback-web` | running, serving behind Entra ID sign-in |
+| Web app | `quackback-web` | running, publicly reachable — see "Access control" |
 | Migration job | `quackback-migrate` | last run `Succeeded` |
 
 Terraform state lives in `stqbtfstate2b798dfd`, container `tfstate`, with blob
@@ -112,7 +112,6 @@ in Germany West Central.
 | Driver tests | `.../storage/__tests__/azure-blob.test.ts` | 23 tests, plus a manual end-to-end run against a live Azurite container. |
 | Infrastructure | `deploy/azure/terraform/` | Postgres Flexible Server, Container Registry, Key Vault, Storage Account, Log Analytics, Container Apps (web, worker, migration job). |
 | CI/CD | `.github/workflows/azure-deploy.yml`, `azure-infra.yml` | Build image, push to registry, run migrations, deploy new revision. **Never yet run.** |
-| Access control | `deploy/azure/scripts/enable-entra-auth.sh` | Puts the app behind Entra ID sign-in, restricted to this tenant. Not Terraform, because azurerm does not manage Container Apps `authConfigs`. |
 | Docs | `deploy/azure/README.md` | Architecture, sizing, gotchas, VM decommissioning runbook. |
 
 Two fixes were made along the way that are not about Azure:
@@ -143,7 +142,7 @@ Be precise about this, because the gap is where the risk lives.
   the table above exists and is running. Four faults were found this way that
   every clean `plan` had missed; see commit `1384f138b`.
 - **The application serves traffic.** Migrations ran to `Succeeded`, and the app
-  returned HTTP 200 on `/onboarding/account` before sign-in was enforced.
+  returned HTTP 200 on `/onboarding/account`.
 - **The Blob driver works in Azure**, not just against Azurite. A screenshot
   uploaded through the UI produced 59,422 bytes of blob *Ingress* and 59,107
   bytes of *Egress* in the same five-minute window, at 100% availability. Note
@@ -151,8 +150,6 @@ Be precise about this, because the gap is where the risk lives.
   the storage account only accepts traffic from the app's subnet, so it fails
   with "request may be blocked by network rules". That is the network lock
   working, not a fault. Metrics are the way to verify from outside.
-- **Entra ID sign-in is enforced.** Anonymous browser requests get `302` to
-  `login.microsoftonline.com`; anonymous API requests get `401`.
 
 **Not verified:**
 
@@ -165,29 +162,29 @@ Be precise about this, because the gap is where the risk lives.
 
 ## Access control
 
-The app is **not publicly reachable**. It sits behind Container Apps built-in
-authentication, backed by a dedicated app registration with
-`signInAudience = AzureADMyOrg` and the issuer pinned to the tenant, so only
-accounts from this tenant can sign in, from any network.
+**The app is currently reachable by anyone with the URL.** Quackback's own
+login is the only thing in front of it. This is a known open decision, not an
+oversight.
 
-Reproduce or repair it with:
+Container Apps built-in authentication (Entra ID sign-in) was implemented and
+working, then deliberately removed: it requires registering an application in
+the tenant directory, which is a heavier commitment than this tool warrants.
 
-```bash
-deploy/azure/scripts/enable-entra-auth.sh rg-quackback-test-01 quackback-web
-```
+If access needs restricting later, the options in rough order of preference:
 
-Three things worth knowing:
+- **Quackback's own authentication**, hardened — no Azure-side objects at all.
+  Disable open sign-up so only invited accounts exist. Cheapest by far, and
+  probably sufficient for an internal tool.
+- **IP allowlisting** on the Container App's ingress. No directory objects
+  needed. Only workable if staff reach it from predictable networks — they did
+  not here, which is why it was rejected the first time.
+- **Container Apps built-in authentication.** Strongest, tenant-wide SSO, works
+  from any network — but needs the app registration that was just backed out,
+  and it blocks the embeddable widget and any unauthenticated API use.
 
-- **This is a second login**, in front of Quackback's own. That is the accepted
-  cost of tenant-level restriction.
-- **It blocks the embeddable widget and any unauthenticated API use.** Chosen
-  deliberately, because nothing embeds the widget. Revisit if that changes.
-- **IP allowlisting was considered and rejected** — staff are not reliably on an
-  office network, so an allowlist locks out legitimate users while doing less.
-
-Terraform does not manage Container Apps `authConfigs`, so this survives
-`terraform apply` untouched — but it also means Terraform will never recreate
-it. If the app is rebuilt from scratch, re-run the script.
+Note the platform pieces behave differently on removal: disabling auth and
+deleting the registration leaves the container app's `aad-client-secret`
+behind, and a secret change does not take effect until the revision restarts.
 
 ## Environment traps
 
@@ -227,15 +224,18 @@ These cost real time here, and will again.
    `AZURE_RESOURCE_GROUP`, `AZURE_WEB_APP`, `AZURE_MIGRATE_JOB`, and
    `AZURE_WORKER_APP` — the last is **empty** when `combined_role = true`.
 
-3. **Retire the old VM.** It is still running and still billing, roughly €30/mo
+3. **Decide how the app should be protected**, or consciously accept that it is
+   open to anyone with the URL. See "Access control" above.
+
+4. **Retire the old VM.** It is still running and still billing, roughly €30/mo
    on top of the new stack. Its disk, NIC, public IP, NSG and the old
    `quackback-vnet` must be deleted explicitly — they do not cascade. See
    "Retiring a single-VM deployment" in `README.md`.
 
-4. **Consider flipping `manage_role_assignments = true`** in `terraform.tfvars`
+5. **Consider flipping `manage_role_assignments = true`** in `terraform.tfvars`
    now that the roles exist, so Terraform owns them going forward.
 
-5. **Sign the CLA** on QuackbackIO/quackback#491 so the upstream vitest fix can
+6. **Sign the CLA** on QuackbackIO/quackback#491 so the upstream vitest fix can
    merge.
 
 ## If an apply crashes midway
